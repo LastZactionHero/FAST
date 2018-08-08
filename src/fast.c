@@ -3,13 +3,15 @@
 #define INPUT_FILE "./output.gray"
 #define DIMENSION_WIDTH 320
 #define DIMENSION_HEIGHT 240
-#define BORDER 3
+#define BORDER 4
 
 #define PIXEL_COUNT DIMENSION_WIDTH * DIMENSION_HEIGHT
+#define THRESHOLD 0x40
 
 unsigned char image[PIXEL_COUNT];
 
-int fast(unsigned char *pixel);
+unsigned char getPixel(int x, int y);
+int fast(int x, int y, unsigned char *pixel);
 
 int main() {
   printf("FAST\n");
@@ -18,72 +20,95 @@ int main() {
   fread(image, PIXEL_COUNT, 1, fp);
 
   // Reverse endianness, fread loads this in backwards
-  for(int i = 0; i < PIXEL_COUNT / 2; i++) {
-    unsigned char tmp = image[i * 2];
-    image[i * 2] = image[i * 2 + 1];
-    image[i * 2 + 1] = tmp;
-  }
-  // dadce1e5
-  // 0000000 dcda e5e1 eeea f1f0 faf6 edf9 d4dd e0d8
-  int cornerCount = 0;
+  // for(int i = 0; i < PIXEL_COUNT / 2; i++) {
+  //   unsigned char tmp = image[i * 2];
+  //   image[i * 2] = image[i * 2 + 1];
+  //   image[i * 2 + 1] = tmp;
+  // }
+
+
   for(int x = BORDER; x < DIMENSION_WIDTH - 2 * BORDER; x++) {
     for(int y = BORDER; y < DIMENSION_HEIGHT - 2 * BORDER; y++) {
-      if(fast(&image[x * DIMENSION_HEIGHT + y]) == 1) {
-        printf("(%d,%d)\n", x, y);
-        cornerCount++;
+      if(fast(x, y, image)) {
+        printf("Found corner: (%d, %d)\n", x, y);
       }
     }
   }
-
-  printf("Corner Count: %d\n", cornerCount);
 
 
   fclose(fp);
 }
 
-int fast(unsigned char *pixel) {
-  unsigned char neighbors[16];
-  neighbors[0] = *(pixel - 3 * DIMENSION_WIDTH);
-  neighbors[1] = *(pixel - 3 * DIMENSION_WIDTH + 1);
-  neighbors[2] = *(pixel - 2 * DIMENSION_WIDTH + 2);
-  neighbors[3] = *(pixel - 1 * DIMENSION_WIDTH + 3);
-  neighbors[4] = *(pixel - 0 * DIMENSION_WIDTH + 3);
-  neighbors[5] = *(pixel + 1 * DIMENSION_WIDTH + 3);
-  neighbors[6] = *(pixel + 2 * DIMENSION_WIDTH + 2);
-  neighbors[7] = *(pixel + 3 * DIMENSION_WIDTH + 1);
-  neighbors[8] = *(pixel + 3 * DIMENSION_WIDTH + 0);
-  neighbors[9] = *(pixel + 3 * DIMENSION_WIDTH - 1);
-  neighbors[10] = *(pixel + 2 * DIMENSION_WIDTH - 2);
-  neighbors[11] = *(pixel + 1 * DIMENSION_WIDTH - 3);
-  neighbors[12] = *(pixel + 0 * DIMENSION_WIDTH - 3);
-  neighbors[13] = *(pixel - 1 * DIMENSION_WIDTH - 3);
-  neighbors[14] = *(pixel - 2 * DIMENSION_WIDTH - 2);
-  neighbors[15] = *(pixel - 3 * DIMENSION_WIDTH - 1);
+unsigned char getPixel(int x, int y) {
+  return image[y * DIMENSION_WIDTH + x];
+}
 
-  // printf("-----\n");
-  for(int i = 0; i < 16; i++) {
-    if(*pixel < neighbors[i] && neighbors[i] - *pixel > 254) {
-      neighbors[i] = neighbors[i] - *pixel;
-    } else {
-      neighbors[i] = *pixel;
-    }
-    // printf("%x\n", neighbors[i]);
+int fast(int x, int y, unsigned char *image) {
+  unsigned char pixel = getPixel(x, y);
+
+  // Pixel is within THRESHOLD of min or max, impossible to a corner
+  if(pixel <= THRESHOLD || pixel >= 0xFF - THRESHOLD) {
+    return 0;
   }
-  // printf("-----\n");
+
+  unsigned char neighbors[16];
+  neighbors[0] = getPixel(x, y - 3);
+  neighbors[1] = getPixel(x + 1, y - 3);
+  neighbors[2] = getPixel(x + 2, y - 2);
+  neighbors[3] = getPixel(x + 3, y - 1);
+  neighbors[4] = getPixel(x + 3, y);
+  neighbors[5] = getPixel(x + 3, y + 1);
+  neighbors[6] = getPixel(x + 2, y + 2);
+  neighbors[7] = getPixel(x + 1, y + 3);
+  neighbors[8] = getPixel(x, y + 3);
+  neighbors[9] = getPixel(x - 1, y + 3);
+  neighbors[10] = getPixel(x - 2, y + 2);
+  neighbors[11] = getPixel(x - 3, y + 1);
+  neighbors[12] = getPixel(x - 3, y);
+  neighbors[13] = getPixel(x - 3, y - 1);
+  neighbors[14] = getPixel(x - 2, y - 2);
+  neighbors[15] = getPixel(x - 1, y - 3);
 
   for(int i = 0; i < 16; i++) {
+    int direction = 0;
     for(int j = 0; j < 12; j++) {
-      int idx = j + i % 12;
-      if(neighbors[idx] == *pixel) {
+      int possibleMatch = 1;
+      int neighborIdx = (i + j) % 12;
+      unsigned char neighborPixel = neighbors[neighborIdx];
+
+      // Is the first pixel lighter, darker, or the same as the center pixel?
+      if(j == 0) {
+        if(neighborPixel > pixel) {
+          // Lighter
+          direction = 1;
+        } else if(neighborPixel < pixel) {
+          // Darker
+          direction = -1;
+        } else {
+          break; // Pixels are equal, nothing to do here.
+        }
+      }
+
+      if(direction == 1) {
+        // Make sure all surrounding pixels are at least THRESHOLD lighter
+        if(neighborPixel <= (pixel + THRESHOLD)) {
+          possibleMatch = 0;
+        }
+      } else {
+        // Make sure all surrounding pixels are at least THRESHOLD darker
+        if(neighborPixel >= pixel - THRESHOLD) {
+          possibleMatch = 0;
+        }
+      }
+
+      if(!possibleMatch) {
         break;
       }
-      printf("Pixel: %x\n", *pixel);
-      for(int k = 0; k < 16; k++){
-        printf("%x", neighbors[i]);
+      if(j == 11 && possibleMatch) {
+        return 1;
       }
-      printf("\n");
-      return 1;
     }
   }
+
   return 0;
 }
